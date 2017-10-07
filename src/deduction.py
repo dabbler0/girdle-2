@@ -7,6 +7,12 @@ def debug_print(*args):
     if DEBUG:
         print(*args)
 
+def progress_log(*args):
+    if DEBUG:
+        print(*args)
+    else:
+        print(*args, end='\033[K\r', flush=True)
+
 # Paramodulate with a specific source and target
 def paramodulate_with(term, source, target):
     # If the source matches the entire term, we can replace.
@@ -101,7 +107,7 @@ def find_contradiction(cnf, h, max_cost = 1000):
         if new_statement in canon:
             continue
 
-        print('Adding this new statement:', model.render_cnf({new_statement}))
+        progress_log('[%s] [%s] %s' % (len(canon), cost, model.render_cnf({new_statement}),))
         canon.add(new_statement)
 
         for statement in canon:
@@ -121,7 +127,7 @@ def find_contradiction(cnf, h, max_cost = 1000):
 
 def n_terms(term):
     if term in model.variables:
-        return 2
+        return 3
     elif term in model.constants:
         return 1
     else:
@@ -188,22 +194,28 @@ if __name__ == '__main__':
     z = newvar('z')
     w = newvar('w')
 
-    '''
-    desired = Universal(x, Universal(y, Universal(z,
-        Relation(eq, Args(
-            Functor(plus, Args(x, Functor(plus, Args(y, z)))),
-            Functor(plus, Args(z, Functor(plus, Args(y, x))))
-    )))))
-    '''
-    desired = Universal(x, Universal(y, Universal(z, Universal(w,
-        Relation(eq, Args(
-            Functor(plus, Args(Functor(plus, Args(x, y)), Functor(plus, Args(z, w)))),
-            Functor(plus, Args(Functor(plus, Args(x, w)), Functor(plus, Args(z, y))))
-    ))))))
+    proof_lines = [
+        Universal(x, Universal(y, Universal(z,
+            Relation(eq, Args(
+                Functor(plus, Args(x, Functor(plus, Args(y, z)))),
+                Functor(plus, Args(z, Functor(plus, Args(y, x))))
+        ))))),
+        Universal(x, Universal(y, Universal(z, Universal(w,
+            Relation(eq, Args(
+                Functor(plus, Args(Functor(plus, Args(x, y)), Functor(plus, Args(z, w)))),
+                Functor(plus, Args(Functor(plus, Args(x, w)), Functor(plus, Args(z, y))))
+        ))))))
+    ]
 
-    proof = prove(axioms, desired)
+    for line in proof_lines:
+        proof = prove(axioms, line)
 
-    print('Suppose for the sake of contradiction that %s' % (model.render_tree(Not(desired))))
-    print('Then the following proof holds.')
-    print(render_proof(proof))
-    print('Thus we have reached a contradiction.')
+        print('')
+        print('We now demonstrate that %s' % (model.render_tree(line),))
+        print('Suppose for the sake of contradiction that %s' % (model.render_tree(Not(line)),))
+        print('Then the following proof holds.')
+        print(render_proof(proof))
+        print('Thus we have reached a contradiction.')
+        print('')
+
+        axioms.update(set(model.canon(x) for x in model.cnf(line)))
