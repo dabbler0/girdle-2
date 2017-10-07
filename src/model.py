@@ -20,7 +20,7 @@ def newconst(name = None):
 def newvar(name = None):
     global current_identifier
     current_identifier += 1
-    variables[current_identifier] = (name.lower() or 'V_{%s}' % (current_identifier,))
+    variables[current_identifier] = (name.lower() or 'v_{%s}' % (current_identifier,))
     var_list.append(current_identifier)
     return current_identifier
 
@@ -68,11 +68,28 @@ def substitute(x, sub):
 def sub_all(x, sub):
     return frozenset(substitute(k, sub) for k in x)
 
-def all_variables(term):
+def all_variables_set(term):
     if type(term) is int:
-        return {term} if term in variables else set()
+        return ({term}, [term]) if term in variables else (set(), [])
     else:
-        return set.union(set(), *(all_variables(x) for x in term))
+        # Enforce a consistent ordering
+        if type(term) is set or type(term) is frozenset:
+            term = sorted(term)
+
+        result_set = set()
+        result = []
+        for x in term:
+            rset, rlist = all_variables_set(x)
+
+            for variable in rlist:
+                if variable not in result_set:
+                    result_set.add(variable)
+                    result.append(variable)
+
+        return result_set, result
+
+def all_variables(term):
+    return all_variables_set(term)[1]
 
 def canon(disjunction):
     # Remove any antireflexive statements
@@ -87,7 +104,7 @@ def canon(disjunction):
 
     # Confine all variables to a finite set
     variter = iter(var_list)
-    return sub_all(disjunction, {x: next(variter) for x in sorted(all_variables(disjunction))})
+    return sub_all(disjunction, {x: next(variter) for x in all_variables(disjunction)})
 
 '''
 MOST GENERAL UNIFIER: returns a new expression with unification.
@@ -100,7 +117,7 @@ def disagree(a, b):
             (d for d in (disagree(x, y) for (x, y) in zip(a, b)) if d is not None),
             None
         )
-    elif a != b and (a in variables or b in variables):
+    elif a != b:
         return (a, b)
     else:
         return None
@@ -234,7 +251,16 @@ def cnf(tree):
     return cnf_stripped(tree)
 
 def render_cnf(cnf_expression):
-    return ' \u2227 '.join('(%s)' % (' \u2228 '.join(render_tree(x) for x in disjunction)) for disjunction in cnf_expression)
+    if len(cnf_expression) == 1:
+        disjunction = next(iter(cnf_expression))
+        if len(disjunction) == 0:
+            return '=><='
+        else:
+            return ' \u2228 '.join(render_tree(x) for x in disjunction)
+    else:
+        return ' \u2227 '.join('(%s)' % (' \u2228 '.join(render_tree(x) for x in disjunction)) for disjunction in cnf_expression)
+
+render_prefs = {}
 
 def render_tree(tree):
     if type(tree) is int:
@@ -244,31 +270,47 @@ def render_tree(tree):
             return variables[tree]
 
     elif type(tree) is Or:
-        return '(%s) \u2228 (%s)' % (render_tree(tree.left), render_tree(tree.right))
+        return '[%s] \u2228 [%s]' % (render_tree(tree.left), render_tree(tree.right))
 
     elif type(tree) is And:
-        return '(%s) \u2227 (%s)' % (render_tree(tree.left), render_tree(tree.right))
+        return '[%s] \u2227 [%s]' % (render_tree(tree.left), render_tree(tree.right))
 
     elif type(tree) is Implies:
-        return '(%s) \u21D2 %s' % (render_tree(tree.left), render_tree(tree.right))
+        return '[%s] \u21D2 %s' % (render_tree(tree.left), render_tree(tree.right))
 
     elif type(tree) is Iff:
-        return '(%s) \u21D4 (%s)' % (render_tree(tree.left), render_tree(tree.right))
+        return '[%s] \u21D4 %s' % (render_tree(tree.left), render_tree(tree.right))
 
     elif type(tree) is Not:
-        return '\u00AC(%s)' % (render_tree(tree.body),)
+        return '\u00AC[%s]' % (render_tree(tree.body),)
 
     elif type(tree) is Universal:
         return '\u2200%s. %s' % (render_tree(tree.variable), render_tree(tree.body))
 
     elif type(tree) is Existential:
-        return '\u2203%s. (%s)' % (render_tree(tree.variable), render_tree(tree.body))
+        return '\u2203%s. %s' % (render_tree(tree.variable), render_tree(tree.body))
 
     elif type(tree) is Relation:
-        return '%s[%s]' % (render_tree(tree.relation), ', '.join(render_tree(x) for x in tree.arguments))
+        if tree.relation in render_prefs and render_prefs[tree.relation] == 'infix':
+            return '[%s %s %s]' % (render_tree(tree.arguments[0]), render_tree(tree.relation), render_tree(tree.arguments[1]))
+        elif tree.relation in render_prefs and render_prefs[tree.relation] == 'postfix':
+            if len(tree.arguments) == 1:
+                return '[%s %s]' % (render_tree(tree.arguments[0]), render_tree(tree.relation))
+            else:
+                return '[%s]%s' % (','.join(render_tree(x) for x in tree.arguments), render_tree(tree.relation))
+        else:
+            return '%s[%s]' % (render_tree(tree.relation), ', '.join(render_tree(x) for x in tree.arguments))
 
     elif type(tree) is Functor:
-        return '%s(%s)' % (render_tree(tree.functor), ', '.join(render_tree(x) for x in tree.arguments))
+        if tree.functor in render_prefs and render_prefs[tree.functor] == 'infix':
+            return '(%s %s %s)' % (render_tree(tree.arguments[0]), render_tree(tree.functor), render_tree(tree.arguments[1]))
+        elif tree.functor in render_prefs and render_prefs[tree.functor] == 'postfix':
+            if len(tree.arguments) == 1:
+                return '(%s %s)' % (render_tree(tree.arguments[0]), render_tree(tree.functor))
+            else:
+                return '(%s)%s' % (','.join(render_tree(x) for x in tree.arguments), render_tree(tree.functor))
+        else:
+            return '%s(%s)' % (render_tree(tree.functor), ', '.join(render_tree(x) for x in tree.arguments))
 
 if __name__ == '__main__':
     a = newvar()

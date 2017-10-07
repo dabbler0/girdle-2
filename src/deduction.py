@@ -1,7 +1,7 @@
 import model
 import heapq
 
-DEBUG = False #True
+DEBUG = False
 
 def debug_print(*args):
     if DEBUG:
@@ -13,7 +13,7 @@ def paramodulate_with(term, source, target):
     mgu = model.mgu(term, source)
 
     if mgu is not None:
-        debug_print('I can substitute', model.render_tree(term), model.render_tree(source), model.render_tree(target))
+        debug_print('I can substitute', model.render_tree(term), model.render_tree(source), model.render_tree(target), mgu)
         yield target, mgu
 
     if type(term) is int:
@@ -35,6 +35,8 @@ def paramodulate(term_a, term_b):
         yield from paramodulate_with(term_a, term_b.arguments[0], term_b.arguments[1])
         yield from paramodulate_with(term_a, term_b.arguments[1], term_b.arguments[0])
 
+# Get all possible binary reductions as well as paramodulations
+# of two disjunctions
 def reductions(a, b):
     b = model.uniquify(b)
 
@@ -63,7 +65,7 @@ def reductions(a, b):
         debug_print('done with some terms')
     debug_print('done with these disjunctions')
 
-def find_contradiction(cnf, h, max_cost = 100):
+def find_contradiction(cnf, h, max_cost = 1000):
     debug_print(model.render_cnf(cnf))
 
     # Frontier -- the things not yet canonicalized
@@ -99,7 +101,7 @@ def find_contradiction(cnf, h, max_cost = 100):
         if new_statement in canon:
             continue
 
-        debug_print('Adding this new statement:', model.render_cnf({new_statement}))
+        print('Adding this new statement:', model.render_cnf({new_statement}))
         canon.add(new_statement)
 
         for statement in canon:
@@ -118,12 +120,14 @@ def find_contradiction(cnf, h, max_cost = 100):
     return proof_map
 
 def n_terms(term):
-    if type(term) is int:
+    if term in model.variables:
+        return 2
+    elif term in model.constants:
         return 1
     else:
         return sum(n_terms(x) for x in term)
 
-def prove(axioms, statement, h = lambda x, a, b: n_terms(x)):
+def prove(axioms, statement, h = lambda x, a, b: n_terms(x) * 10):
     # Assume statement is not true, and find a contradiction.
     return find_contradiction(axioms | model.cnf(model.Not(statement)), h)
 
@@ -159,13 +163,17 @@ def render_proof(proof_map):
     return '\n'.join(lines)
 
 if __name__ == '__main__':
-    from model import Universal, Existential, And, Or, Implies, Iff, Not, Relation, Functor, Args, newvar, newconst
+    from model import Universal, Existential, And, Or, Implies, Iff, Not, Relation, Functor, Args, newvar, newconst, render_prefs
 
     eq = 0
     a = newvar('a')
     b = newvar('b')
     c = newvar('c')
     plus = newconst('+')
+
+    render_prefs[plus] = 'infix'
+    render_prefs[eq] = 'infix'
+
 
     axioms = set.union(
         model.cnf(Universal(a, Universal(b, Relation(eq, Args(Functor(plus, Args(a, b)), Functor(plus, Args(b, a))))))),
@@ -178,12 +186,20 @@ if __name__ == '__main__':
     x = newvar('x')
     y = newvar('y')
     z = newvar('z')
+    w = newvar('w')
 
+    '''
     desired = Universal(x, Universal(y, Universal(z,
         Relation(eq, Args(
             Functor(plus, Args(x, Functor(plus, Args(y, z)))),
             Functor(plus, Args(z, Functor(plus, Args(y, x))))
     )))))
+    '''
+    desired = Universal(x, Universal(y, Universal(z, Universal(w,
+        Relation(eq, Args(
+            Functor(plus, Args(Functor(plus, Args(x, y)), Functor(plus, Args(z, w)))),
+            Functor(plus, Args(Functor(plus, Args(x, w)), Functor(plus, Args(z, y))))
+    ))))))
 
     proof = prove(axioms, desired)
 
