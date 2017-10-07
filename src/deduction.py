@@ -20,7 +20,7 @@ def paramodulate_with(term, source, target):
 
     if mgu is not None:
         debug_print('I can substitute', model.render_tree(term), model.render_tree(source), model.render_tree(target), mgu)
-        yield target, mgu
+        yield target, mgu, (source, target)
 
     if type(term) is int:
         return
@@ -28,8 +28,8 @@ def paramodulate_with(term, source, target):
     # We can also match any subterm, and
     # replace only that subterm
     for subterm in term:
-        for submodulation, mgu in paramodulate_with(subterm, source, target):
-            yield type(term)(*(submodulation if x is subterm else x for x in term)), mgu
+        for submodulation, mgu, note in paramodulate_with(subterm, source, target):
+            yield type(term)(*(submodulation if x is subterm else x for x in term)), mgu, note
 
 def paramodulate(term_a, term_b):
     # Attempt paramodulations. 0 is the equality relation.
@@ -49,9 +49,8 @@ def reductions(a, b):
     for term_a in a:
         for term_b in b:
             # Attempt paramodulations
-            for paramodulated_term, mgu in paramodulate(term_a, term_b):
-                debug_print('yielding from paramodulation')
-                yield model.sub_all(((a | b) - {term_a, term_b}) | {paramodulated_term}, mgu)
+            for paramodulated_term, mgu, note in paramodulate(term_a, term_b):
+                yield model.sub_all(((a | b) - {term_a, term_b}) | {paramodulated_term}, mgu), ('paramodulation', (note[0], note[1], mgu))
 
             # Attempt a binary reduction.
             if (type(term_a) is model.Not) == (type(term_b) is model.Not):
@@ -67,7 +66,7 @@ def reductions(a, b):
             # If they possibly match, yield the match
             if mgu is not None:
                 debug_print('yielding from binary reduction')
-                yield model.sub_all((a | b - {neg_term, pos_term}), mgu)
+                yield model.sub_all((a | b - {neg_term, pos_term}), mgu), ('reduction', pos_term)
         debug_print('done with some terms')
     debug_print('done with these disjunctions')
 
@@ -79,13 +78,13 @@ def find_contradiction(cnf, h, max_cost = 1000):
     frontier = []
     proof_map = {x: None for x in cnf}
     cost_map = {x: 0 for x in cnf}
-    def push(x, a, b):
+    def push(x, a, b, note):
         if x not in cnf:
             debug_print('pushing', model.render_cnf({x}))
             if x in cost_map or x in proof_map:
                 return
             cost_map[x] = h(x, a, b) + max(cost_map[a], cost_map[b]) + 1
-            proof_map[x] = (a, b)
+            proof_map[x] = (a, b, note)
         heapq.heappush(frontier, (cost_map[x], x))
 
     pop = lambda: heapq.heappop(frontier)
@@ -95,7 +94,7 @@ def find_contradiction(cnf, h, max_cost = 1000):
 
     # The initial frontier contains all the axioms
     for axiom in cnf:
-        push(model.canon(axiom), None, None)
+        push(model.canon(axiom), None, None, None)
 
     # Keep generating new deductions
     while frozenset() not in canon:
@@ -112,9 +111,9 @@ def find_contradiction(cnf, h, max_cost = 1000):
 
         for statement in canon:
             debug_print('reducing with next statement', model.render_cnf({statement}))
-            for reduction in reductions(statement, new_statement):
+            for reduction, note in reductions(statement, new_statement):
                 reduction = model.canon(reduction)
-                push(reduction, statement, new_statement)
+                push(reduction, statement, new_statement, note)
 
                 # Return should happen from here
                 if len(reduction) == 0:
@@ -159,10 +158,19 @@ def render_proof(proof_map):
     for i, x in enumerate(toposorted):
         if proof_map[x] is None:
             lines.append('The following is given:')
-        else:
-            lines.append('From [%d] and [%d] we have:' % (
+        elif proof_map[x][2][0] == 'paramodulation':
+            source, target, mgu = proof_map[x][2][1]
+            lines.append('From [%d] and [%d] we can substitute %s = %s, giving us:' % (
                 inv_index[proof_map[x][0]],
-                inv_index[proof_map[x][1]]
+                inv_index[proof_map[x][1]],
+                model.render_tree(model.substitute(source, mgu)),
+                model.render_tree(model.substitute(target, mgu))
+            ))
+        elif proof_map[x][2][0] == 'reductoin':
+            lines.append('From [%d] and [%d] we can apply the binary reduction of $s, giving us:' % (
+                inv_index[proof_map[x][0]],
+                inv_index[proof_map[x][1]],
+                model.render_tree(proof_map[x][2][1])
             ))
         lines.append('  [%d] %s' % (i + 1, model.render_cnf({x})))
 
