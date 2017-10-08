@@ -3,25 +3,43 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 
-\title{The Girdle Schema}
+\title{Girdle: Four Steps to Automatic Theorem Proving}
 \author{David Anthony Bau}
 
 \begin{document}
 
 \maketitle
 
-We will attempt to, as much as possible, use the terms used in actual model theory to describe the classes of Girdle.
+\section{The Model}
 
-Every proof the user writes will consist of a sequence of \textbf{steps}.
-
-A \textbf{step} with either be a \textbf{formula}, a \textbf{definition}, or an \textbf{explicit application}.
-
-A \textbf{formula} is a tree of the following operators:
+The first step to automatic theorem proving is to set up a representation for sentences ("sentences" in the model-theoretic sense). We require that every language in which Girdle works contain at least the following symbols:
 
 \begin{enumerate}
-  \item The logical operators: $\land$, $\lor$, $\implies$, $\iff$, $\lnot$, $\exists$, $\forall$, $=$
-  \item Any defined relational operators $R(a, b, c, \dots)$.
-  \item Any define functional operators $F(a, b, c, \dots)$.
+    \item $\forall x. \psi[x]$, the universal quantifier
+    \item $\exists x. \psi[x]$, the existential quantifier
+    \item $x \land y$, logical and
+    \item $x \lor y$, logical or
+    \item $x \implies y$, logical implies
+    \item $x \iff y$, logical equivalence
+    \item $=[x, y]$, the equality relation, more frequently written as $x = y$
 \end{enumerate}
+
+These operations all have the associated normal axioms (for instance, $=$ is reflexive, transitive, and commutative, and De Morgan's laws apply).
+
+Working with arbitrary trees of sentences is dramatically inconvenient, so we move everything to conjunctive normal form (CNF). This is a "flat" representation of sentences where every sentence is a conjunction of disjunctions of (optionally) negations of terms. This can be reached simply by applying De Morgan's laws and the distributive property several times.
+
+\[(a \land b) \lor c = (a \lor c) \land (b \lor c)\]
+\[\not (a \land b) = (\not a) \lor (\not b)\]
+\[\not (a \lor b) = (\not a) \land (\not b)\]
+\[\not \exists x. \psi[x] = \forall x. \not \psi[x]\]
+\[\not \forall x. \psi[x] = \exists x. \not \psi[x]\]
+
+We then move further into Skolem conjunctive normal form by Skolemizing out all of the existential quantifiers. Skolemization is the motion:
+
+\[\forall x. \exists y. \psi[x, y] = \exists Y. \forall x. \psi[x, Y(x)]\]
+
+In other words, saying "for every $x$, I can find a $y$" is equivalent to saying "there is some finder-function $Y$ that can find such a value for every $x$".
+
+Now that everything is in Skolem normal form, variables exist in exactly one of two context: either they were declared as $\exists$ or declared as $\forall$ (order no longer matters). We then make every $\exists$ variable a constant, which is a refutationally complete operation (equivalent to saying "one exists, so choose one"). If we show inconsistency, i.e. if we show that \textbf{no} model can fill in the constants correctly, then we will have shown that no model can satisfy the existence conditions either, since if one did we could just pick the correct interpreation and it would fill in the constants correctly too. Conversely, if we can't show inconsistency, i.e. if there exists some model that fills in these constants correctly, then some model satisfies the existence conditions too trivially. Thus this operation is refutationally complete. Now we can treat all variables the same, and all constants the same.
 
 \end{document}
