@@ -1,5 +1,7 @@
 import model
 import heapq
+import sys
+sys.setrecursionlimit(5000)
 
 DEBUG = False
 
@@ -16,11 +18,14 @@ def progress_log(*args):
 # Paramodulate with a specific source and target
 def paramodulate_with(term, source, target):
     # If the source matches the entire term, we can replace.
-    mgu = model.mgu(term, source)
+    # We cannot paramodulate into an Args object.
+    if (type(term) is not model.Args and
+          type(term) is not model.Relation and type(target) is not model.Relation):
+      mgu = model.mgu(term, source)
 
-    if mgu is not None:
-        debug_print('I can substitute', model.render_tree(term), model.render_tree(source), model.render_tree(target), mgu)
-        yield target, mgu, (source, target)
+      if mgu is not None:
+          debug_print('I can substitute', model.render_tree(term), model.render_tree(source), model.render_tree(target), mgu)
+          yield target, mgu, (source, target)
 
     if type(term) is int:
         return
@@ -28,6 +33,9 @@ def paramodulate_with(term, source, target):
     # We can also match any subterm, and
     # replace only that subterm
     for subterm in term:
+        #if ((type(term) is model.Functor and term is term.functor) or
+        #        (type(term) is model.Relation and term is term.relation)):
+        #    continue
         for submodulation, mgu, note in paramodulate_with(subterm, source, target):
             yield type(term)(*(submodulation if x is subterm else x for x in term)), mgu, note
 
@@ -48,25 +56,31 @@ def reductions(a, b):
 
     for term_a in a:
         for term_b in b:
+            # Attempt a binary reduction.
+            if (type(term_a) is model.Not) != (type(term_b) is model.Not):
+              # If only one is negated, figure out which one and continue
+              neg_term = (term_a if type(term_a) is model.Not else term_b)
+              pos_term = (term_b if type(term_a) is model.Not else term_a)
+
+              avars = model.all_variables(neg_term)
+              bvars = model.all_variables(pos_term)
+
+              if len(set(avars) & set(bvars)) > 0:
+                  print(model.render_tree(neg_term))
+                  print(model.render_tree(pos_term))
+                  raise 'ERROR!'
+
+              # Get mgu
+              mgu = model.mgu(neg_term.body, pos_term)
+
+              # If they possibly match, yield the match
+              if mgu is not None:
+                  debug_print('yielding from binary reduction')
+                  yield model.sub_all((a | b - {neg_term, pos_term}), mgu), ('reduction', pos_term)
+
             # Attempt paramodulations
             for paramodulated_term, mgu, note in paramodulate(term_a, term_b):
                 yield model.sub_all(((a | b) - {term_a, term_b}) | {paramodulated_term}, mgu), ('paramodulation', (note[0], note[1], mgu))
-
-            # Attempt a binary reduction.
-            if (type(term_a) is model.Not) == (type(term_b) is model.Not):
-                continue
-
-            # If only one is negated, figure out which one and continue
-            neg_term = (term_a if type(term_a) is model.Not else term_b)
-            pos_term = (term_b if type(term_a) is model.Not else term_a)
-
-            # Get mgu
-            mgu = model.mgu(neg_term.body, pos_term)
-
-            # If they possibly match, yield the match
-            if mgu is not None:
-                debug_print('yielding from binary reduction')
-                yield model.sub_all((a | b - {neg_term, pos_term}), mgu), ('reduction', pos_term)
         debug_print('done with some terms')
     debug_print('done with these disjunctions')
 
@@ -91,6 +105,7 @@ def find_contradiction(cnf, h, max_cost = 1000):
 
     # The canon of deductions we have made so far
     canon = set()
+    ordered_canon = []
 
     # The initial frontier contains all the axioms
     for axiom in cnf:
@@ -108,8 +123,9 @@ def find_contradiction(cnf, h, max_cost = 1000):
 
         progress_log('[%s] [%s] %s' % (len(canon), cost, model.render_cnf({new_statement}),))
         canon.add(new_statement)
+        ordered_canon.append(new_statement)
 
-        for statement in canon:
+        for statement in ordered_canon:
             debug_print('reducing with next statement', model.render_cnf({statement}))
             for reduction, note in reductions(statement, new_statement):
                 reduction = model.canon(reduction)
@@ -125,12 +141,21 @@ def find_contradiction(cnf, h, max_cost = 1000):
     return proof_map
 
 def n_terms(term):
+    r = 0
+
     if term in model.variables:
-        return 3
+        r += 3
     elif term in model.constants:
-        return 1
+        r += 1
     else:
-        return sum(n_terms(x) for x in term)
+        r += sum(n_terms(x) for x in term)
+
+    if type(term) is model.Relation and term.relation not in model.constants:
+        r += 20
+    elif type(term) is model.Functor and term.functor not in model.constants:
+        r += 20
+
+    return r
 
 def prove(axioms, statement, h = lambda x, a, b: n_terms(x) * 10):
     # Assume statement is not true, and find a contradiction.
@@ -184,24 +209,51 @@ if __name__ == '__main__':
     b = newvar('b')
     c = newvar('c')
     plus = newconst('+')
+    times = newconst('*')
+    zero = newconst('0')
 
     render_prefs[plus] = 'infix'
+    render_prefs[times] = 'infix'
     render_prefs[eq] = 'infix'
 
 
     axioms = set.union(
+        # Addition is commutative and associative
         model.cnf(Universal(a, Universal(b, Relation(eq, Args(Functor(plus, Args(a, b)), Functor(plus, Args(b, a))))))),
         model.cnf(Universal(a, Universal(b, Universal(c, Relation(eq, Args(
             Functor(plus, Args(a, Functor(plus, Args(b, c)))),
             Functor(plus, Args(Functor(plus, Args(a, b)), c))
-        ))))))
+        )))))),
+
+        # Cancellation law for addition
+        model.cnf(Universal(a, Universal(b, Universal(c, Implies(
+          Relation(eq, Args(Functor(plus, Args(a, b)), Functor(plus, Args(a, c)))),
+          Relation(eq, Args(b, c))
+        ))))),
+
+        # Multiplication is commutative and associative
+        model.cnf(Universal(a, Universal(b, Relation(eq, Args(Functor(times, Args(a, b)), Functor(times, Args(b, a))))))),
+        model.cnf(Universal(a, Universal(b, Universal(c, Relation(eq, Args(
+            Functor(times, Args(a, Functor(times, Args(b, c)))),
+            Functor(times, Args(Functor(times, Args(a, b)), c))
+        )))))),
+
+        # Multiplication distributes over addition
+        model.cnf(Universal(a, Universal(b, Universal(c, Relation(eq, Args(
+            Functor(times, Args(a, Functor(plus, Args(b, c)))),
+            Functor(plus, Args(Functor(times, Args(a, b)), Functor(times, Args(a, c))))
+        )))))),
+
+        # Zero is the additive identity
+        model.cnf(Universal(a, Relation(eq, Args(
+            Functor(plus, Args(a, zero)),
+            a
+        )))),
     )
 
     x = newvar('x')
-    y = newvar('y')
-    z = newvar('z')
-    w = newvar('w')
 
+    '''
     proof_lines = [
         Universal(x, Universal(y, Universal(z,
             Relation(eq, Args(
@@ -214,12 +266,41 @@ if __name__ == '__main__':
                 Functor(plus, Args(Functor(plus, Args(x, w)), Functor(plus, Args(z, y))))
         ))))))
     ]
+    '''
+
+    '''
+    Approximation of the following proof:
+
+    \\Theorem zeroprod (x)
+      \\Conclusions
+        \ x * 0 = 0
+      \\Proof
+        \ x * x = x * (x + 0)
+        \ x * x = x * x + x * 0
+
+        \ x * x = x * x + 0
+
+        \ x * x + 0 = x * x + x * 0
+        \ 0 = x * 0
+        \\QED
+    '''
+    proof_lines = [
+      #Universal(x, Relation(eq, Args(
+      #  Functor(times, Args(x, x)),
+      #  Functor(times, Args(x, Functor(plus, Args(x, zero))))
+      #))),
+      #Universal(x, Relation(eq, Args(Functor(times, Args(x, x)), Functor(plus, Args(Functor(times, Args(x, x)), Functor(times, Args(x, zero))))))),
+      #Universal(x, Relation(eq, Args(Functor(times, Args(x, x)), Functor(plus, Args(Functor(times, Args(x, x)), zero))))),
+      #Universal(x, Relation(eq, Args(Functor(plus, Args(Functor(times, Args(x, x)), zero)), Functor(plus, Args(Functor(times, Args(x, x)), Functor(times, Args(x, zero))))))),
+      #Universal(x, Relation(eq, Args(zero, Functor(times, Args(x, zero))))),
+      Universal(x, Relation(eq, Args(Functor(times, Args(x, zero)), zero)))
+    ]
 
     for line in proof_lines:
-        proof = prove(axioms, line)
-
         print('')
         print('We now demonstrate that %s' % (model.render_tree(line),))
+        proof = prove(axioms, line)
+        print('')
         print('Suppose for the sake of contradiction that %s' % (model.render_tree(Not(line)),))
         print('Then the following proof holds.')
         print(render_proof(proof))

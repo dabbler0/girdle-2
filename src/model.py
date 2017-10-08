@@ -4,6 +4,11 @@ from collections import namedtuple
 
 # Constants are integers. Variables and constants exist in the same space.
 
+DEBUG = False
+def debug_print(*args):
+    if DEBUG:
+        print(*args)
+
 current_identifier = 0
 
 constants = {0: '='}
@@ -63,6 +68,7 @@ SUBSTITUTION
 def substitute(x, sub):
     if type(x) is int:
         return (sub[x] if x in sub else x)
+    debug_print(render_tree(x))
     return type(x)(*(substitute(k, sub) for k in x))
 
 def sub_all(x, sub):
@@ -74,7 +80,7 @@ def all_variables_set(term):
     else:
         # Enforce a consistent ordering
         if type(term) is set or type(term) is frozenset:
-            term = sorted(term)
+            term = sorted(term, key = hash)
 
         result_set = set()
         result = []
@@ -127,6 +133,12 @@ def uniquify(disjunction):
             {x: newvar(variables[x] + '\'') for x in all_variables(disjunction)}
     )
 
+def variable_in(x, y):
+    if type(y) is int:
+        return x == y
+    else:
+        return any(variable_in(x, z) for z in y)
+
 def mgu(a, b):
     sub = {}
 
@@ -136,11 +148,9 @@ def mgu(a, b):
         if diff is None:
             return sub
 
-        #print('Diff:', diff[0], render_tree(diff[0]), diff[1], render_tree(diff[1]))
-
-        if diff[0] in variables:
+        if diff[0] in variables and not variable_in(diff[0], diff[1]):
             sub[diff[0]] = diff[1]
-        elif diff[1] in variables:
+        elif diff[1] in variables and not variable_in(diff[1], diff[0]):
             sub[diff[1]] = diff[0]
         else:
             return None
@@ -319,7 +329,6 @@ if __name__ == '__main__':
     eq = 0
 
     tree = Universal(a, Existential(b, Iff(Relation(eq, Args(a, b)), Relation(eq, Args(b, a)))))
-    print('Tree')
     print(render_tree(tree))
     print(render_tree(strip_inference(tree)))
     print(render_tree(strip_negation(strip_inference(tree))))
